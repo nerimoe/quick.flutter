@@ -1,9 +1,10 @@
 import 'dart:ffi';
 import 'dart:io';
-import 'dart:typed_data';
+import 'dart:ffi' as ffi;
 
 import 'package:ffi/ffi.dart' as ffi;
 import 'package:flutter/foundation.dart';
+
 import 'package:libusb/libusb64.dart';
 import 'package:quick_usb/src/common.dart';
 
@@ -223,6 +224,9 @@ class _QuickUsbDesktop extends QuickUsbPlatform {
         yield UsbInterface(
           id: intfDesc.bInterfaceNumber,
           alternateSetting: intfDesc.bAlternateSetting,
+          interfaceClass: intfDesc.bInterfaceClass,
+          interfaceSubclass: intfDesc.bInterfaceSubClass,
+          interfaceProtocol: intfDesc.bInterfaceProtocol,
           endpoints: _iterateEndpoint(intfDesc.endpoint, intfDesc.bNumEndpoints)
               .toList(),
         );
@@ -238,6 +242,8 @@ class _QuickUsbDesktop extends QuickUsbPlatform {
       yield UsbEndpoint(
         endpointNumber: endpointDesc.bEndpointAddress & UsbEndpoint.MASK_NUMBER,
         direction: endpointDesc.bEndpointAddress & UsbEndpoint.MASK_DIRECTION,
+        type: endpointDesc.bmAttributes & 0x03,
+        maxPacketSize: endpointDesc.wMaxPacketSize,
       );
     }
   }

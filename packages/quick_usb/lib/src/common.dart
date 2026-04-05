@@ -72,11 +72,17 @@ class UsbConfiguration {
 class UsbInterface {
   final int id;
   final int alternateSetting;
+  final int interfaceClass;
+  final int interfaceSubclass;
+  final int interfaceProtocol;
   final List<UsbEndpoint> endpoints;
 
   UsbInterface({
     required this.id,
     required this.alternateSetting,
+    required this.interfaceClass,
+    required this.interfaceSubclass,
+    required this.interfaceProtocol,
     required this.endpoints,
   });
 
@@ -85,7 +91,10 @@ class UsbInterface {
         (map['endpoints'] as List).map((e) => UsbEndpoint.fromMap(e)).toList();
     return UsbInterface(
       id: map['id'],
-      alternateSetting: map['alternateSetting'],
+      alternateSetting: map['alternateSetting'] ?? 0,
+      interfaceClass: map['interfaceClass'] ?? 0,
+      interfaceSubclass: map['interfaceSubclass'] ?? 0,
+      interfaceProtocol: map['interfaceProtocol'] ?? 0,
       endpoints: endpoints,
     );
   }
@@ -94,6 +103,9 @@ class UsbInterface {
     return {
       'id': id,
       'alternateSetting': alternateSetting,
+      'interfaceClass': interfaceClass,
+      'interfaceSubclass': interfaceSubclass,
+      'interfaceProtocol': interfaceProtocol,
       'endpoints': endpoints.map((e) => e.toMap()).toList(),
     };
   }
@@ -116,16 +128,22 @@ class UsbEndpoint {
 
   final int endpointNumber;
   final int direction;
+  final int type;
+  final int maxPacketSize;
 
   UsbEndpoint({
     required this.endpointNumber,
     required this.direction,
+    required this.type,
+    required this.maxPacketSize,
   });
 
   factory UsbEndpoint.fromMap(Map<dynamic, dynamic> map) {
     return UsbEndpoint(
       endpointNumber: map['endpointNumber'],
       direction: map['direction'],
+      type: map['type'] ?? 0,
+      maxPacketSize: map['maxPacketSize'] ?? 0,
     );
   }
 
@@ -135,6 +153,8 @@ class UsbEndpoint {
     return {
       'endpointNumber': endpointNumber,
       'direction': direction,
+      'type': type,
+      'maxPacketSize': maxPacketSize,
     };
   }
 

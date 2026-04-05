@@ -18,7 +18,7 @@ private const val ACTION_USB_PERMISSION = "com.example.quick_usb.USB_PERMISSION"
 
 private val pendingIntentFlag =
   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-    PendingIntent.FLAG_MUTABLE  or PendingIntent.FLAG_ALLOW_UNSAFE_IMPLICIT_INTENT or PendingIntent.FLAG_UPDATE_CURRENT
+    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
   } else {
     PendingIntent.FLAG_UPDATE_CURRENT
   }
@@ -233,7 +233,7 @@ class QuickUsbPlugin : FlutterPlugin, MethodCallHandler {
 }
 
 fun UsbDevice.findInterface(id: Int, alternateSetting: Int): UsbInterface? {
-  for (i in 0..interfaceCount) {
+  for (i in 0 until interfaceCount) {
     val usbInterface = getInterface(i)
     if (usbInterface.id == id && usbInterface.alternateSetting == alternateSetting) {
       return usbInterface
@@ -243,9 +243,9 @@ fun UsbDevice.findInterface(id: Int, alternateSetting: Int): UsbInterface? {
 }
 
 fun UsbDevice.findEndpoint(endpointNumber: Int, direction: Int): UsbEndpoint? {
-  for (i in 0..interfaceCount) {
+  for (i in 0 until interfaceCount) {
     val usbInterface = getInterface(i)
-    for (j in 0..usbInterface.endpointCount) {
+    for (j in 0 until usbInterface.endpointCount) {
       val endpoint = usbInterface.getEndpoint(j)
       if (endpoint.endpointNumber == endpointNumber && endpoint.direction == direction) {
         return endpoint
@@ -266,10 +266,15 @@ fun UsbConfiguration.toMap() = mapOf(
 fun UsbInterface.toMap() = mapOf(
   "id" to id,
   "alternateSetting" to alternateSetting,
+  "interfaceClass" to interfaceClass,
+  "interfaceSubclass" to interfaceSubclass,
+  "interfaceProtocol" to interfaceProtocol,
   "endpoints" to List(endpointCount) { getEndpoint(it).toMap() }
 )
 
 fun UsbEndpoint.toMap() = mapOf(
         "endpointNumber" to endpointNumber,
-        "direction" to direction
+        "direction" to direction,
+        "type" to type,
+        "maxPacketSize" to maxPacketSize
 )
