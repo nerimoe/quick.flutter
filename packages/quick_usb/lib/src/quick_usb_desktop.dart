@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:ffi' as ffi;
@@ -350,5 +351,50 @@ class _QuickUsbDesktop extends QuickUsbPlatform {
     if (Platform.isLinux) {
       _libusb.libusb_set_auto_detach_kernel_driver(_devHandle!, enable ? 1 : 0);
     }
+  }
+
+  // --- Streaming bulk transfer (desktop fallback) ---
+  bool _streamReading = false;
+  StreamController<Uint8List>? _desktopStreamController;
+
+  /// On desktop, libusb runs via FFI in the same Dart isolate but doesn't
+  /// block Flutter's platform thread. We use a simple async polling loop.
+  @override
+  Stream<Uint8List> bulkTransferInStream(
+      UsbEndpoint endpoint, int maxLength, {int timeout = 50}) {
+    assert(_devHandle != null, 'Device not open');
+
+    _desktopStreamController?.close();
+    _desktopStreamController = StreamController<Uint8List>.broadcast(
+      onCancel: () {
+        _streamReading = false;
+      },
+    );
+    _streamReading = true;
+
+    // Async polling loop — libusb timeout keeps it from busy-waiting
+    () async {
+      while (_streamReading && _devHandle != null) {
+        try {
+          final data = await bulkTransferIn(endpoint, maxLength, timeout);
+          if (data.isNotEmpty) {
+            _desktopStreamController?.add(data);
+          }
+        } catch (_) {
+          // Timeout or error, continue
+        }
+        // Yield to event loop briefly
+        await Future.delayed(Duration.zero);
+      }
+    }();
+
+    return _desktopStreamController!.stream;
+  }
+
+  @override
+  Future<void> stopBulkTransferInStream() async {
+    _streamReading = false;
+    _desktopStreamController?.close();
+    _desktopStreamController = null;
   }
 }

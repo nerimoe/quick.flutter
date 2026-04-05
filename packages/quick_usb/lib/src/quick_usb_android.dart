@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:quick_usb/src/common.dart';
 import 'package:quick_usb/src/quick_usb_platform_interface.dart';
 
 const MethodChannel _channel = MethodChannel('quick_usb');
+const EventChannel _bulkReadEventChannel = EventChannel('quick_usb/bulk_transfer_in_stream');
 
 class QuickUsbAndroid extends QuickUsbPlatform {
   // For example/.dart_tool/flutter_build/generated_main.dart
@@ -136,4 +138,63 @@ class QuickUsbAndroid extends QuickUsbPlatform {
 
   @override
   Future<void> setAutoDetachKernelDriver(bool enable) async {}
+
+  // --- Streaming bulk transfer API ---
+
+  StreamSubscription? _nativeStreamSub;
+  StreamController<Uint8List>? _streamController;
+
+  /// Start a background-thread bulk read loop on the native side and return
+  /// a Dart [Stream] of received USB packets.
+  ///
+  /// On Android, this uses an [EventChannel] backed by a dedicated Java
+  /// ExecutorService thread, so USB I/O never blocks the Flutter UI thread.
+  @override
+  Stream<Uint8List> bulkTransferInStream(
+      UsbEndpoint endpoint, int maxLength, {int timeout = 50}) {
+    assert(endpoint.direction == UsbEndpoint.DIRECTION_IN,
+        'Endpoint\'s direction should be in');
+
+    // Clean up any previous stream
+    _nativeStreamSub?.cancel();
+    _streamController?.close();
+
+    _streamController = StreamController<Uint8List>.broadcast();
+
+    // Tell the native side to start the background read loop
+    _channel.invokeMethod('startBulkTransferInStream', {
+      'endpoint': endpoint.toMap(),
+      'maxLength': maxLength,
+      'timeout': timeout,
+    });
+
+    // Listen to EventChannel for data pushed from the background thread
+    _nativeStreamSub = _bulkReadEventChannel
+        .receiveBroadcastStream()
+        .listen(
+      (dynamic data) {
+        if (data != null && _streamController != null) {
+          _streamController!.add(Uint8List.fromList((data as List).cast<int>()));
+        }
+      },
+      onError: (error) {
+        _streamController?.addError(error);
+      },
+      onDone: () {
+        _streamController?.close();
+      },
+    );
+
+    return _streamController!.stream;
+  }
+
+  /// Stop the background bulk read stream.
+  @override
+  Future<void> stopBulkTransferInStream() async {
+    _nativeStreamSub?.cancel();
+    _nativeStreamSub = null;
+    _streamController?.close();
+    _streamController = null;
+    await _channel.invokeMethod('stopBulkTransferInStream');
+  }
 }

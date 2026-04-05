@@ -59,4 +59,17 @@ abstract class QuickUsbPlatform extends PlatformInterface {
       UsbEndpoint endpoint, Uint8List data, int timeout);
 
   Future<void> setAutoDetachKernelDriver(bool enable);
+
+  /// Start a background-thread bulk transfer read loop that streams data
+  /// via an EventChannel. This avoids blocking the UI thread on Android.
+  ///
+  /// Returns a broadcast [Stream] of [Uint8List] packets.
+  /// On platforms using libusb (desktop), this falls back to a Dart isolate
+  /// or a simple polling loop since libusb is already non-blocking.
+  Stream<Uint8List> bulkTransferInStream(
+      UsbEndpoint endpoint, int maxLength, {int timeout = 50});
+
+  /// Stop the background bulk transfer read stream.
+  Future<void> stopBulkTransferInStream();
 }
+

@@ -7,13 +7,21 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.hardware.usb.*
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
 import androidx.annotation.NonNull
 import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
+private const val TAG = "QuickUsbPlugin"
 private const val ACTION_USB_PERMISSION = "com.example.quick_usb.USB_PERMISSION"
 
 private val pendingIntentFlag =
@@ -26,27 +34,53 @@ private val pendingIntentFlag =
 private fun pendingPermissionIntent(context: Context) = PendingIntent.getBroadcast(context, 0, Intent(ACTION_USB_PERMISSION), pendingIntentFlag)
 
 /** QuickUsbPlugin */
-class QuickUsbPlugin : FlutterPlugin, MethodCallHandler {
+class QuickUsbPlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandler {
   /// The MethodChannel that will the communication between Flutter and native Android
   ///
   /// This local reference serves to register the plugin with the Flutter Engine and unregister it
   /// when the Flutter Engine is detached from the Activity
   private lateinit var channel: MethodChannel
+  private lateinit var eventChannel: EventChannel
 
   private var applicationContext: Context? = null
   private var usbManager: UsbManager? = null
+
+  // --- Background read state ---
+  private var readExecutor: ExecutorService? = null
+  private val isReading = AtomicBoolean(false)
+  private var eventSink: EventChannel.EventSink? = null
+  private val mainHandler = Handler(Looper.getMainLooper())
 
   override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
     channel = MethodChannel(flutterPluginBinding.binaryMessenger, "quick_usb")
     channel.setMethodCallHandler(this)
     applicationContext = flutterPluginBinding.applicationContext
     usbManager = applicationContext?.getSystemService(Context.USB_SERVICE) as UsbManager
+
+    // EventChannel for streaming bulk transfer reads from background thread
+    eventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "quick_usb/bulk_transfer_in_stream")
+    eventChannel.setStreamHandler(this)
   }
 
   override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
     channel.setMethodCallHandler(null)
+    eventChannel.setStreamHandler(null)
+    stopBulkTransferInStream()
     usbManager = null
     applicationContext = null
+  }
+
+  // --- EventChannel.StreamHandler ---
+
+  override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+    Log.d(TAG, "bulkTransferInStream: onListen")
+    eventSink = events
+  }
+
+  override fun onCancel(arguments: Any?) {
+    Log.d(TAG, "bulkTransferInStream: onCancel")
+    eventSink = null
+    stopBulkTransferInStream()
   }
 
   private var usbDevice: UsbDevice? = null
@@ -140,6 +174,7 @@ class QuickUsbPlugin : FlutterPlugin, MethodCallHandler {
         result.success(true)
       }
       "closeDevice" -> {
+        stopBulkTransferInStream()
         usbDeviceConnection?.close()
         usbDeviceConnection = null
         usbDevice = null
@@ -227,8 +262,86 @@ class QuickUsbPlugin : FlutterPlugin, MethodCallHandler {
           result.success(sum)
         }
       }
+      // --- Streaming bulk transfer API ---
+      "startBulkTransferInStream" -> {
+        val device = usbDevice ?: return result.error("IllegalState", "usbDevice null", null)
+        val connection = usbDeviceConnection ?: return result.error("IllegalState", "usbDeviceConnection null", null)
+        val endpointMap = call.argument<Map<String, Any>>("endpoint")!!
+        val maxLength = call.argument<Int>("maxLength") ?: 64
+        val readTimeout = call.argument<Int>("timeout") ?: 50
+
+        val endpoint = device.findEndpoint(
+          endpointMap["endpointNumber"] as Int,
+          endpointMap["direction"] as Int
+        )
+        if (endpoint == null) {
+          return result.error("INVALID_ENDPOINT", "Endpoint not found", null)
+        }
+
+        startBulkTransferInStream(connection, endpoint, maxLength, readTimeout)
+        result.success(true)
+      }
+      "stopBulkTransferInStream" -> {
+        stopBulkTransferInStream()
+        result.success(true)
+      }
       else -> result.notImplemented()
     }
+  }
+
+  // --- Background read thread ---
+
+  /**
+   * Start a dedicated background thread that continuously calls bulkTransfer
+   * and pushes received data to Flutter via EventChannel.
+   *
+   * This is the key performance optimization: USB reads no longer block the
+   * Flutter UI thread. The background thread handles blocking I/O, and data
+   * is posted to the main thread only when bytes are actually received.
+   */
+  private fun startBulkTransferInStream(
+    connection: UsbDeviceConnection,
+    endpoint: UsbEndpoint,
+    maxLength: Int,
+    timeout: Int,
+  ) {
+    if (isReading.getAndSet(true)) {
+      Log.w(TAG, "bulkTransferInStream already running")
+      return
+    }
+
+    readExecutor = Executors.newSingleThreadExecutor()
+    readExecutor?.execute {
+      Log.i(TAG, "Background bulk read loop started (ep=${endpoint.endpointNumber}, maxLen=$maxLength, timeout=$timeout)")
+      val buffer = ByteArray(maxLength)
+
+      while (isReading.get()) {
+        try {
+          val bytesRead = connection.bulkTransfer(endpoint, buffer, buffer.size, timeout)
+          if (bytesRead > 0) {
+            val data = buffer.copyOf(bytesRead)
+            // Post to main thread for EventChannel delivery
+            mainHandler.post {
+              eventSink?.success(data.toList())
+            }
+          }
+          // bytesRead <= 0 means timeout or no data, just continue
+        } catch (e: Exception) {
+          Log.e(TAG, "Bulk read error: ${e.message}")
+          // Brief pause to avoid tight-looping on persistent errors
+          try { Thread.sleep(5) } catch (_: InterruptedException) { break }
+        }
+      }
+      Log.i(TAG, "Background bulk read loop stopped")
+    }
+  }
+
+  private fun stopBulkTransferInStream() {
+    if (isReading.getAndSet(false)) {
+      Log.i(TAG, "Stopping bulk read stream")
+    }
+    readExecutor?.shutdownNow()
+    readExecutor = null
   }
 }
 

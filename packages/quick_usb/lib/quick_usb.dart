@@ -70,4 +70,19 @@ class QuickUsb {
 
   static Future<void> setAutoDetachKernelDriver(bool enable) =>
       _platform.setAutoDetachKernelDriver(enable);
+
+  /// Start a background bulk transfer read stream.
+  ///
+  /// On Android, this uses a dedicated native thread via EventChannel,
+  /// completely avoiding UI thread blocking. On desktop, it falls back to
+  /// an async polling loop using libusb with short timeouts.
+  ///
+  /// Returns a broadcast [Stream<Uint8List>] of received USB packets.
+  static Stream<Uint8List> bulkTransferInStream(
+          UsbEndpoint endpoint, int maxLength, {int timeout = 50}) =>
+      _platform.bulkTransferInStream(endpoint, maxLength, timeout: timeout);
+
+  /// Stop the background bulk transfer read stream.
+  static Future<void> stopBulkTransferInStream() =>
+      _platform.stopBulkTransferInStream();
 }
